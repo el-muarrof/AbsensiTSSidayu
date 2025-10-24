@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Absensi QR Code Web</title>
+    <script src="https://rawgit.com/schmich/instascan-builds/master/instascan.min.js"></script>
+    <style>
+        body { font-family: sans-serif; margin: 0; padding: 20px; background-color: #f4f4f4; color: #333; }
+        .container { max-width: 600px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        h1 { text-align: center; color: #007bff; }
+        #preview { width: 100%; max-width: 400px; height: 300px; margin: 20px auto; display: block; background: #000; border: 2px solid #ccc; }
+        #info-box { padding: 10px; margin-top: 20px; border-radius: 5px; text-align: center; }
+        .info-success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .info-registered { background-color: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
+        .info-invalid { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        #status-display { font-size: 1.2em; font-weight: bold; margin-top: 10px; }
+        .attendance-list { margin-top: 30px; border-collapse: collapse; width: 100%; }
+        .attendance-list th, .attendance-list td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        .attendance-list th { background-color: #007bff; color: white; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Absensi Tapak Suci Sidayu</h1>
+
+        <video id="preview"></video>
+
+        <div id="info-box" class="info-invalid">
+            <p>Scan kartu di sini.</p>
+            <div id="status-display">-- SIAP SCAN --</div>
+            <p>Nama: <span id="nama-display">-</span> | Waktu: <span id="waktu-display">-</span></p>
+        </div>
+        
+        <audio id="audio-success" src="https://s3.eu-central-1.amazonaws.com/instascan-assets/sound/success.mp3" preload="auto"></audio>
+        <audio id="audio-fail" src="https://s3.eu-central-1.amazonaws.com/instascan-assets/sound/fail.mp3" preload="auto"></audio>
+
+        <h2>Daftar Kehadiran Terbaru</h2>
+        <table class="attendance-list">
+            <thead>
+                <tr>
+                    <th>Nama</th>
+                    <th>Waktu</th>
+                </tr>
+            </thead>
+            <tbody id="attendance-body">
+                {% for item in recent_attendance %}
+                <tr>
+                    <td>{{ item.Nama }}</td>
+                    <td>{{ item.Waktu }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+    </div>
+
+    <script>
+        const video = document.getElementById('preview');
+        const infoBox = document.getElementById('info-box');
+        const statusDisplay = document.getElementById('status-display');
+        const namaDisplay = document.getElementById('nama-display');
+        const waktuDisplay = document.getElementById('waktu-display');
+        const attendanceBody = document.getElementById('attendance-body');
+        const audioSuccess = document.getElementById('audio-success');
+        const audioFail = document.getElementById('audio-fail');
+        
+        let lastScannedData = null; // Menyimpan data QR terakhir
+        let isScanning = true;      // Flag untuk mengontrol jeda
+
+        // === FUNGSI UTAMA SCANNER ===
+        let scanner = new Instascan.Scanner({ video: video, scanPeriod: 5 });
+
+        scanner.addListener('scan', function (content) {
+            if (!isScanning) return; // Abaikan jika sedang dalam masa jeda
+
+            // Cek apakah data yang baru sama dengan yang terakhir (mencegah double scan)
+            if (content === lastScannedData) return;
+            
+            lastScannedData = content;
+            isScanning = false; // Mulai jeda
+
+            // Kirim data ke backend Flask
+            fetch('/scan', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ qr_data: content })
+            })
+            .then(response => response.json())
+            .then(data => {
+                updateUI(data);
+
+                // Setelah pemrosesan, tunggu 3 detik sebelum mengizinkan scan lagi
+                setTimeout(() => {
+                    lastScannedData = null; // Reset data terakhir setelah jeda
+                    isScanning = true;
+                    // Reset UI ke status awal setelah jeda (opsional)
+                    // infoBox.className = 'info-invalid';
+                    // statusDisplay.innerText = '-- SIAP SCAN --';
+                }, 3000); 
+            })
+            .catch((error) => {
+                console.error('Error:', error);
+                updateUI({ nama: "ERROR", status: "SERVER_ERROR", waktu: "NOW" });
+                // Pastikan scanner bisa scan lagi meskipun error
+                setTimeout(() => { lastScannedData = null; isScanning = true; }, 3000);
+            });
+        });
+
+        // === FUNGSI UNTUK MENGUPDATE TAMPILAN ===
+        function updateUI(data) {
+            namaDisplay.innerText = data.nama || '-';
+            waktuDisplay.innerText = data.waktu || '-';
+            
+            switch (data.status) {
+                case 'SUCCESS':
+                    infoBox.className = 'info-box info-success';
+                    statusDisplay.innerText = '-- SUKSES ABSEN --';
+                    audioSuccess.play();
+                    break;
+                case 'REGISTERED':
+                    infoBox.className = 'info-box info-registered';
+                    statusDisplay.innerText = '-- SUDAH ABSEN --';
+                    audioFail.play();
+                    break;
+                case 'INVALID_QR':
+                    infoBox.className = 'info-box info-invalid';
+                    statusDisplay.innerText = '-- QR CODE TIDAK SAH --';
+                    audioFail.play();
+                    break;
+                default:
+                    infoBox.className = 'info-box info-invalid';
+                    statusDisplay.innerText = '-- TERJADI KESALAHAN --';
+                    audioFail.play();
+            }
+
+            // Update daftar kehadiran
+            if (data.recent_attendance) {
+                attendanceBody.innerHTML = ''; // Kosongkan daftar lama
+                data.recent_attendance.forEach(item => {
+                    const row = attendanceBody.insertRow();
+                    row.insertCell().innerText = item.Nama;
+                    row.insertCell().innerText = item.Waktu;
+                });
+            }
+        }
+
+        // === START KAMERA ===
+        Instascan.Camera.getCameras().then(function (cameras) {
+            if (cameras.length > 0) {
+                // Pilih kamera belakang jika ada (biasanya index terakhir)
+                const preferredCamera = cameras.length > 1 ? cameras[cameras.length - 1] : cameras[0];
+                scanner.start(preferredCamera);
+            } else {
+                console.error('Tidak ada kamera yang ditemukan.');
+                alert('Tidak ada kamera yang ditemukan di perangkat ini!');
+            }
+        }).catch(function (e) {
+            console.error(e);
+            alert('Gagal mengakses kamera: ' + e);
+        });
+    </script>
+</body>
+</html>
