@@ -26,16 +26,23 @@ SHEET_TITLE = "Rekap Absensi Tapak Suci Sidayu" # Ganti dengan nama Google Sheet
 
 # --- FUNGSI KONEKSI DAN MANAJEMEN GSHEETS ---
 
+import pathlib 
+
 def get_gspread_client():
-    """Menginisialisasi klien GSpread menggunakan kredensial dari Environment Variable."""
+    """Menginisialisasi klien GSpread menggunakan file kredensial lokal."""
     try:
-        creds_json = os.environ.get('GSPREAD_CREDENTIALS')
-        if not creds_json:
-            print("ERROR: Environment variable GSPREAD_CREDENTIALS tidak ditemukan!")
-            return None
+        # Tentukan path relatif ke file kredensial Anda
+        # Pastikan gsheet_credentials.json ada di folder yang sama dengan app.py
+        BASE_DIR = pathlib.Path(__file__).parent
+        CREDENTIALS_FILE = BASE_DIR / "gsheet_credentials.json"
         
-        creds = json.loads(creds_json)
-        gc = gspread.service_account_from_dict(creds)
+        # Periksa apakah file ada
+        if not CREDENTIALS_FILE.exists():
+            print("ERROR: File kredensial GSheets tidak ditemukan di path:", CREDENTIALS_FILE)
+            return None
+            
+        # Gunakan service_account dari path file
+        gc = gspread.service_account(filename=CREDENTIALS_FILE)
         return gc
     except Exception as e:
         print(f"Gagal menginisialisasi GSpread client: {e}")
